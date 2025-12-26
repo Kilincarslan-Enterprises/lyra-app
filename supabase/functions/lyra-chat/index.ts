@@ -6,6 +6,9 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey",
 };
 
+const N8N_WEBHOOK_URL = "https://zuefer-kilincarslan-n8n.zk-ai.agency/webhook/lyra";
+const WEBHOOK_AUTH_TOKEN = Deno.env.get("WEBHOOK_AUTH_TOKEN");
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response(null, {
@@ -15,7 +18,7 @@ Deno.serve(async (req: Request) => {
   }
 
   try {
-    const { message, userId, n8nWebhookUrl } = await req.json();
+    const { message, userId } = await req.json();
 
     if (!message || !userId) {
       return new Response(
@@ -30,30 +33,15 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    if (n8nWebhookUrl) {
-      const n8nResponse = await fetch(n8nWebhookUrl, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          message,
-          userId,
-          timestamp: new Date().toISOString(),
-        }),
-      });
-
-      if (!n8nResponse.ok) {
-        console.error("n8n webhook failed:", await n8nResponse.text());
-      }
-
-      const n8nData = await n8nResponse.json();
+    if (!WEBHOOK_AUTH_TOKEN) {
+      console.error("WEBHOOK_AUTH_TOKEN is not configured");
       return new Response(
         JSON.stringify({
-          success: true,
-          response: n8nData.response || "Message received and processed",
+          success: false,
+          response: "Service configuration error. Please contact support.",
         }),
         {
+          status: 500,
           headers: {
             ...corsHeaders,
             "Content-Type": "application/json",
@@ -62,10 +50,42 @@ Deno.serve(async (req: Request) => {
       );
     }
 
+    const n8nResponse = await fetch(N8N_WEBHOOK_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "WEBHOOK_AUTH_TOKEN": WEBHOOK_AUTH_TOKEN,
+      },
+      body: JSON.stringify({
+        message,
+        userId,
+        timestamp: new Date().toISOString(),
+      }),
+    });
+
+    if (!n8nResponse.ok) {
+      const errorText = await n8nResponse.text();
+      console.error("n8n webhook failed:", errorText);
+      return new Response(
+        JSON.stringify({
+          success: false,
+          response: "Failed to process your message. Please try again.",
+        }),
+        {
+          status: 502,
+          headers: {
+            ...corsHeaders,
+            "Content-Type": "application/json",
+          },
+        }
+      );
+    }
+
+    const n8nData = await n8nResponse.json();
     return new Response(
       JSON.stringify({
         success: true,
-        response: "Hello! I'm LYRA, your AI social media assistant. How can I help you manage your social media accounts today?",
+        response: n8nData.response || "Message received and processed",
       }),
       {
         headers: {
@@ -77,7 +97,10 @@ Deno.serve(async (req: Request) => {
   } catch (error) {
     console.error("Error in lyra-chat function:", error);
     return new Response(
-      JSON.stringify({ error: "Internal server error", details: error.message }),
+      JSON.stringify({
+        error: "Internal server error",
+        details: error.message
+      }),
       {
         status: 500,
         headers: {
